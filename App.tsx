@@ -1,12 +1,5 @@
-import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import WatchlistScreen from './app/(tabs)/index';
+import RootLayout from './app/_layout';
 
-export default function App() {
-  return (
-    <>
-      <WatchlistScreen />
-      <StatusBar style="auto" />
-    </>
-  );
-}
+// Đảm bảo App.tsx luôn trỏ về RootLayout của Expo Router
+export default RootLayout;
+

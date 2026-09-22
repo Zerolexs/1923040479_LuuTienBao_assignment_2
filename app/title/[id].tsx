@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,60 +9,80 @@ import {
   Pressable,
   ActivityIndicator,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { useWatchlist } from '../../hooks/useWatchlist';
+import { useWatchlistStore } from '../../store/useWatchlistStore';
+import { getDetailTitle } from '../../services/tmdbApi';
 import { Title } from '../../types/watchlist';
 import { AppButton } from '../../components/AppButton';
 
 /**
  * Màn hình Chi tiết phim (TitleDetailScreen)
  * Đường dẫn: app/title/[id].tsx
+ * - Lấy id và type từ URL query params: useLocalSearchParams<{ id: string; type: string }>()
+ * - Dùng TanStack Query (useQuery) gọi getDetailTitle từ TMDB API
+ * - Đồng bộ trạng thái đã xem (1-tap) với Zustand Store
+ * - Render giao diện an toàn 4 trạng thái: Loading, Error, Empty, Content
+ * - Render Season/Episode dạng Accordion cho Phim bộ mà KHÔNG BỊ CRASH
  */
 export default function TitleDetailScreen() {
   // =========================================================================
-  // 1. LẤY ID TỪ ROUTE PARAMS ĐỂ TÌM PHIM TRONG STORE
+  // 1. LẤY ID VÀ TYPE TỪ EXPO ROUTER PARAMS
   // =========================================================================
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
+  const { id, type } = useLocalSearchParams<{ id: string; type: string }>();
 
-  // Bảng màu giao diện theo chuẩn Light / Dark mode
+  // Bảng màu giao diện chuẩn Light / Dark mode (không dùng mã màu hex trực tiếp)
   const colors = useThemeColors();
 
-  // Lấy dữ liệu danh sách và hàm cập nhật từ Persistent Zustand Store
-  const { titles, toggleWatchStatus } = useWatchlist();
+  // Lấy hàm kiểm tra trạng thái xem và cập nhật từ Zustand Store
+  const { isWatched, toggleWatchStatus } = useWatchlistStore();
 
-  // Tìm phim theo mã định danh (id) được truyền qua router
-  const title: Title | undefined = titles.find((item) => item.id === id);
+  // Trạng thái mở/đóng Accordion của từng Mùa (mặc định Mùa 1 mở sẵn)
+  const [expandedSeasons, setExpandedSeasons] = useState<Record<number, boolean>>({ 1: true });
 
-  // Quản lý các trạng thái giao diện: Loading, Error
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isError, setIsError] = useState<boolean>(false);
-
-  /**
-   * Hàm nạp dữ liệu phim (hỗ trợ hiển thị Loading và xử lý Thử lại khi có lỗi)
-   */
-  const loadTitleData = (): void => {
-    setIsLoading(true);
-    setIsError(false);
-
-    // Thời gian trễ ngắn mô phỏng quá trình đọc Cache/Store
-    setTimeout(() => {
-      // Nếu có id nhưng không tìm thấy phim và có lỗi kết nối thì có thể set isError
-      // Ở đây hoàn tất nạp thành công trạng thái
-      setIsLoading(false);
-    }, 250);
+  // Hàm chuyển đổi thu gọn / mở rộng Accordion của một Mùa
+  const toggleSeasonAccordion = (seasonNumber: number) => {
+    setExpandedSeasons((prev) => ({
+      ...prev,
+      [seasonNumber]: prev[seasonNumber] !== undefined ? !prev[seasonNumber] : false,
+    }));
   };
 
-  useEffect(() => {
-    loadTitleData();
-  }, [id]);
+  // =========================================================================
+  // 2. GỌI TMDB API CHI TIẾT QUA TANSTACK QUERY (REACT QUERY)
+  // =========================================================================
+  const {
+    data: title,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery<Title | null>({
+    queryKey: ['title-detail', id, type],
+    queryFn: () => getDetailTitle(id as string, type as 'movie' | 'series' | undefined),
+    enabled: Boolean(id), // Chỉ gọi khi đã có id hợp lệ
+  });
+
+  // Trạng thái đã xem thực tế của người dùng từ Zustand Store
+  const watched: boolean = Boolean(id && isWatched(id));
+
+  /**
+   * Hàm quay lại màn hình trước an toàn
+   * Nếu có lịch sử điều hướng thì gọi router.back(), nếu không thì quay về trang chủ '/'
+   */
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  };
 
   // =========================================================================
-  // 2. XỬ LÝ 4 TRẠNG THÁI GIAO DIỆN (UI STATES)
+  // 3. XỬ LÝ 4 TRẠNG THÁI GIAO DIỆN (UI STATES)
   // =========================================================================
 
-  // TRẠNG THÁI 1: LOADING (Đang tải dữ liệu)
+  // TRẠNG THÁI 1: LOADING (Đang tải dữ liệu từ máy chủ API)
   if (isLoading) {
     return (
       <SafeAreaView
@@ -70,13 +90,13 @@ export default function TitleDetailScreen() {
       >
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={[styles.statusSubtext, { color: colors.textSecondary }]}>
-          Đang tải thông tin phim...
+          Đang tải thông tin phim từ máy chủ...
         </Text>
       </SafeAreaView>
     );
   }
 
-  // TRẠNG THÁI 2: ERROR (Lỗi tải dữ liệu kèm nút Thử lại)
+  // TRẠNG THÁI 2: ERROR (Lỗi kết nối máy chủ API kèm nút Thử lại)
   if (isError) {
     return (
       <SafeAreaView
@@ -86,12 +106,12 @@ export default function TitleDetailScreen() {
           Không thể tải dữ liệu
         </Text>
         <Text style={[styles.statusSubtext, { color: colors.textSecondary }]}>
-          Đã có lỗi xảy ra. Vui lòng thử lại.
+          Đã có lỗi xảy ra trong quá trình kết nối máy chủ. Vui lòng thử lại.
         </Text>
         <AppButton
           title="Thử lại"
           accessibilityLabel="Thử lại tải thông tin phim"
-          onPress={loadTitleData}
+          onPress={() => refetch()}
           style={styles.stateActionButton}
         />
       </SafeAreaView>
@@ -113,7 +133,7 @@ export default function TitleDetailScreen() {
         <AppButton
           title="Quay lại danh sách"
           accessibilityLabel="Quay lại danh sách phim"
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={styles.stateActionButton}
         />
       </SafeAreaView>
@@ -121,16 +141,16 @@ export default function TitleDetailScreen() {
   }
 
   // TRẠNG THÁI 4: CONTENT (Hiển thị đầy đủ nội dung chi tiết của bộ phim)
-  const isWatched: boolean = title.status === 'watched';
+  const isSeriesType = title.type === 'series' || type === 'series';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Nút quay lại đạt chuẩn Touch Target 44x44 pt và Accessibility */}
+        {/* Nút quay lại: Chuẩn Touch Target tối thiểu 44x44 pt và Accessibility */}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Quay lại màn hình trước"
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={({ pressed }) => [
             styles.backNavButton,
             {
@@ -166,18 +186,18 @@ export default function TitleDetailScreen() {
           <View style={styles.badgeRow}>
             <View style={[styles.badge, { backgroundColor: colors.primary }]}>
               <Text style={[styles.badgeText, { color: colors.buttonText }]}>
-                {title.type === 'movie' ? '🎬 Phim lẻ (Movie)' : '📺 Phim bộ (Series)'}
+                {isSeriesType ? '📺 Phim bộ (Series)' : '🎬 Phim lẻ (Movie)'}
               </Text>
             </View>
 
             <View
               style={[
                 styles.badge,
-                { backgroundColor: isWatched ? colors.success : colors.error },
+                { backgroundColor: watched ? colors.success : colors.error },
               ]}
             >
               <Text style={[styles.badgeText, { color: colors.buttonText }]}>
-                {isWatched ? '✓ Đã xem' : '⏳ Cần xem'}
+                {watched ? '✓ Đã xem' : '⏳ Cần xem'}
               </Text>
             </View>
           </View>
@@ -202,12 +222,12 @@ export default function TitleDetailScreen() {
           {/* 
             Nút đổi trạng thái 1-Tap:
             - Chuyển đổi qua lại 'Chưa xem' <-> 'Đã xem' ngay tức thì.
-            - Tự động đồng bộ vào Persistent Zustand Store (AsyncStorage) để không mất khi restart.
+            - Tự động đồng bộ vào Zustand Store (được lưu bền vững trong AsyncStorage).
           */}
           <AppButton
-            title={isWatched ? 'Đánh dấu: Chưa xem' : '✓ Đánh dấu: Đã xem'}
+            title={watched ? 'Đánh dấu: Chưa xem' : '✓ Đánh dấu: Đã xem'}
             accessibilityLabel={
-              isWatched
+              watched
                 ? `Đánh dấu phim ${title.name} là chưa xem`
                 : `Đánh dấu phim ${title.name} là đã xem`
             }
@@ -218,74 +238,97 @@ export default function TitleDetailScreen() {
 
         {/* 
           =============================================================================
-          3. XỬ LÝ GIAO DIỆN PHIM BỘ (SERIES) TUYỆT ĐỐI AN TOÀN - KHÔNG BỊ CRASH:
-          - Kiểm tra điều kiện an toàn: (title.type === 'series').
-          - Nếu có seasons: Kiểm tra chặt chẽ (title.seasons && title.seasons.length > 0)
-            trước khi gọi hàm .map().
-          - Nếu seasons là undefined/null hoặc mảng rỗng []:
-            Lập tức chuyển sang nhánh hiển thị "Chưa có thông tin tập phim",
-            ngăn chặn hoàn toàn lỗi Runtime Exception: Cannot read properties of undefined.
+          4. XỬ LÝ GIAO DIỆN PHIM BỘ (SERIES) ACCORDION - TUYỆT ĐỐI AN TOÀN KHÔNG CRASH:
+          - Kiểm tra điều kiện: (isSeriesType).
+          - Kiểm tra an toàn: Boolean(title.seasons && title.seasons.length > 0).
+          - Hỗ trợ Accordion: Bấm vào tiêu đề Mùa để mở rộng / thu gọn danh sách tập phim.
+          - Nếu seasons bị null, undefined hoặc mảng rỗng:
+            Hiển thị thông báo thân thiện: "Chưa có thông tin tập phim",
+            không bao giờ để ứng dụng bị crash hay văng màn hình.
           =============================================================================
         */}
-        {title.type === 'series' && (
+        {isSeriesType && (
           <View style={styles.seriesContainer}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>
               Danh sách Mùa & Tập phim
             </Text>
 
-            {title.seasons && title.seasons.length > 0 ? (
-              title.seasons.map((season) => (
-                <View
-                  key={season.seasonNumber}
-                  style={[
-                    styles.seasonCard,
-                    { backgroundColor: colors.card, borderColor: colors.border },
-                  ]}
-                >
-                  <Text style={[styles.seasonHeader, { color: colors.primary }]}>
-                    Mùa {season.seasonNumber} (
-                    {season.episodes ? season.episodes.length : 0} tập)
-                  </Text>
+            {Boolean(title.seasons && title.seasons.length > 0) ? (
+              title.seasons!.map((season) => {
+                const isExpanded =
+                  expandedSeasons[season.seasonNumber] ?? (season.seasonNumber === 1);
+                const episodeCount = season.episodes ? season.episodes.length : 0;
 
-                  {/* Kiểm tra an toàn danh sách tập phim trong mùa */}
-                  {season.episodes && season.episodes.length > 0 ? (
-                    season.episodes.map((episode) => (
-                      <View
-                        key={episode.id}
-                        style={[
-                          styles.episodeItem,
-                          { borderBottomColor: colors.border },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.episodeNumber,
-                            { color: colors.textSecondary },
-                          ]}
-                        >
-                          Tập {episode.episodeNumber}:
-                        </Text>
-                        <Text
-                          style={[styles.episodeTitle, { color: colors.text }]}
-                        >
-                          {episode.name}
-                        </Text>
-                      </View>
-                    ))
-                  ) : (
-                    <Text
-                      style={[
-                        styles.emptyNoticeText,
-                        { color: colors.textSecondary },
+                return (
+                  <View
+                    key={season.seasonNumber}
+                    style={[
+                      styles.seasonCard,
+                      { backgroundColor: colors.card, borderColor: colors.border },
+                    ]}
+                  >
+                    {/* Header Mùa dạng Accordion có thể bấm để đóng/mở */}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mùa ${season.seasonNumber}, có ${episodeCount} tập. Nhấn để ${isExpanded ? 'thu gọn' : 'mở rộng'}`}
+                      onPress={() => toggleSeasonAccordion(season.seasonNumber)}
+                      style={({ pressed }) => [
+                        styles.seasonHeaderRow,
+                        { opacity: pressed ? 0.7 : 1 },
                       ]}
                     >
-                      Chưa có thông tin tập phim cho mùa này.
-                    </Text>
-                  )}
-                </View>
-              ))
+                      <Text style={[styles.seasonHeader, { color: colors.primary }]}>
+                        Mùa {season.seasonNumber} ({episodeCount} tập)
+                      </Text>
+                      <Text style={[styles.accordionIcon, { color: colors.textSecondary }]}>
+                        {isExpanded ? '▲ Thu gọn' : '▼ Mở rộng'}
+                      </Text>
+                    </Pressable>
+
+                    {/* Danh sách tập phim hiển thị khi Accordion mở */}
+                    {isExpanded && (
+                      <View style={styles.episodeListContainer}>
+                        {season.episodes && season.episodes.length > 0 ? (
+                          season.episodes.map((episode) => (
+                            <View
+                              key={episode.id}
+                              style={[
+                                styles.episodeItem,
+                                { borderBottomColor: colors.border },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.episodeNumber,
+                                  { color: colors.textSecondary },
+                                ]}
+                              >
+                                Tập {episode.episodeNumber}:
+                              </Text>
+                              <Text
+                                style={[styles.episodeTitle, { color: colors.text }]}
+                              >
+                                {episode.name}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <Text
+                            style={[
+                              styles.emptyNoticeText,
+                              { color: colors.textSecondary },
+                            ]}
+                          >
+                            Chưa có thông tin tập phim cho mùa này.
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })
             ) : (
-              /* Xử lý khi seasons rỗng hoặc undefined */
+              /* Trường hợp Series chưa có dữ liệu seasons hoặc rỗng */
               <View
                 style={[
                   styles.seasonCard,
@@ -341,10 +384,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     minWidth: 170,
   },
-  // Nút điều hướng quay lại
+  // Nút điều hướng quay lại (chuẩn Touch Target 44x44 pt)
   backNavButton: {
     alignSelf: 'flex-start',
-    minHeight: 44, // Chuẩn Touch Target tối thiểu 44pt
+    minHeight: 44,
     minWidth: 44,
     paddingHorizontal: 16,
     borderWidth: 1,
@@ -420,15 +463,31 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   seasonCard: {
-    padding: 14,
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 14,
+    overflow: 'hidden',
+  },
+  // Tiêu đề Mùa dạng Accordion
+  seasonHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    minHeight: 44, // Chuẩn Touch Target tối thiểu 44pt
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   seasonHeader: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 10,
+  },
+  accordionIcon: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  episodeListContainer: {
+    paddingHorizontal: 14,
+    paddingBottom: 10,
   },
   episodeItem: {
     flexDirection: 'row',
@@ -448,7 +507,7 @@ const styles = StyleSheet.create({
   emptyNoticeText: {
     fontSize: 14,
     fontStyle: 'italic',
-    paddingVertical: 8,
+    paddingVertical: 12,
     textAlign: 'center',
   },
 });
