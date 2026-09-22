@@ -7,7 +7,7 @@ export const Colors = {
   light: {
     background: '#F8F9FA',      // Màu nền chính của ứng dụng
     card: '#FFFFFF',            // Màu nền thẻ nội dung, danh sách
-    text: '#111827',            // Màu chữ chính (tương phản cao, dễ đọc)
+    text: '#1A1A1A',            // Màu chữ chính (tương phản cao, dễ đọc)
     textSecondary: '#6B7280',   // Màu chữ phụ (mô tả, nhãn phụ)
     primary: '#007AFF',         // Màu chủ đạo (nút bấm, icon nổi bật)
     border: '#E5E7EB',          // Màu đường viền ngăn cách
@@ -16,6 +16,7 @@ export const Colors = {
     warning: '#F59E0B',         // Màu vàng/cam cảnh báo (Offline Banner)
     warningText: '#FFFFFF',     // Màu chữ trên nền cảnh báo vàng/cam
     buttonText: '#FFFFFF',      // Màu chữ hiển thị trên nút bấm chính
+    overlay: '#00000080',       // Màu nền mờ cho Modal / Bottom Sheet (50% opacity)
   },
 
   // Bảng màu cho chế độ Tối
@@ -31,6 +32,7 @@ export const Colors = {
     warning: '#D97706',         // Màu vàng/cam cảnh báo chế độ tối
     warningText: '#FFFFFF',     // Màu chữ trên nền cảnh báo vàng/cam
     buttonText: '#FFFFFF',      // Màu chữ hiển thị trên nút bấm chính
+    overlay: '#000000B3',       // Màu nền mờ cho Modal / Bottom Sheet chế độ tối (70% opacity)
   },
 };
 

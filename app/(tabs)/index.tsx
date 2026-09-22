@@ -10,11 +10,14 @@ import {
   Pressable,
   ScrollView,
   SafeAreaView,
+  Modal,
+  TouchableOpacity,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useWatchlistStore } from '../../store/useWatchlistStore';
+import { useThemeStore } from '../../store/useThemeStore';
 import { getPopularTitles } from '../../services/tmdbApi';
 import { Title } from '../../types/watchlist';
 import { AppButton } from '../../components/AppButton';
@@ -27,6 +30,9 @@ import { OfflineBanner } from '../../components/OfflineBanner';
 export default function WatchlistScreen() {
   // Lấy bảng màu hiện tại theo giao diện Sáng/Tối
   const colors = useThemeColors();
+
+  // Quản lý chế độ giao diện Sáng / Tối từ Zustand Theme Store
+  const { themeMode, toggleTheme } = useThemeStore();
 
   // =========================================================================
   // 1. GỌI TMDB API QUA TANSTACK QUERY & KẾT HỢP ZUSTAND STORE
@@ -75,8 +81,16 @@ export default function WatchlistScreen() {
   const [selectedGenre, setSelectedGenre] = useState<string>('Tất cả');
 
   // =========================================================================
-  // 3. TÍNH TOÁN TIẾN ĐỘ THỜI GIAN THỰC (REAL-TIME PROGRESS)
+  // 3. TÍNH TOÁN TIẾN ĐỘ THỜI GIAN THỰC & QUẢN LÝ PHIM ĐÃ XEM
   // =========================================================================
+  // State kiểm tra hiển thị Modal danh sách phim đã xem khi bấm vào Card Tiến độ
+  const [isWatchedModalOpen, setIsWatchedModalOpen] = useState<boolean>(false);
+
+  // Danh sách các bộ phim người dùng đã xem (status === 'watched')
+  const watchedTitles: Title[] = useMemo(() => {
+    return titles.filter((t) => t.status === 'watched');
+  }, [titles]);
+
   const totalTitles: number = titles.length;
   const watchedCount: number = titles.filter((item) => item.status === 'watched').length;
   const toWatchCount: number = titles.filter((item) => item.status === 'to_watch').length;
@@ -241,17 +255,58 @@ export default function WatchlistScreen() {
         =============================================================================
       */}
       <View style={styles.headerContainer}>
-        {/* Khối hiển thị tiến độ xem phim */}
-        <View
+        {/* Hàng tiêu đề ứng dụng & Nút chuyển đổi Theme Sáng/Tối ở góc trên cùng bên phải */}
+        <View style={styles.topBarRow}>
+          <Text style={[styles.appHeaderTitle, { color: colors.text }]}>
+            🎬 Movie Watchlist
+          </Text>
+
+          {/* 
+            Nút bấm chuyển đổi giao diện Sáng / Tối (Light / Dark Mode Toggle):
+            - Dark Mode: Hiển thị icon Mặt Trời ☀️ (để bấm chuyển sang Light Mode)
+            - Light Mode: Hiển thị icon Mặt Trăng 🌙 (để bấm chuyển sang Dark Mode)
+            - Chuẩn Accessibility: minHeight 44, minWidth 44, accessibilityRole="button"
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Chuyển đổi giao diện sáng tối"
+            accessibilityHint="Nhấn để chuyển đổi qua lại giữa giao diện Sáng và Tối"
+            onPress={toggleTheme}
+            style={({ pressed }) => [
+              styles.themeToggleBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+          >
+            <Text style={styles.themeToggleIcon}>
+              {themeMode === 'dark' ? '☀️' : '🌙'}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Khối hiển thị tiến độ xem phim - Bấm để mở Modal danh sách phim đã xem */}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => setIsWatchedModalOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Tiến độ xem phim: đã xem ${watchedCount} trên ${totalTitles} bộ phim, đạt ${watchedPercentage}%. Nhấn để xem danh sách phim đã xem.`}
           style={[
             styles.progressCard,
             { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
           <View style={styles.progressTextRow}>
-            <Text style={[styles.progressTitle, { color: colors.text }]}>
-              Tiến độ xem phim
-            </Text>
+            <View style={styles.progressTitleWithHint}>
+              <Text style={[styles.progressTitle, { color: colors.text }]}>
+                Tiến độ xem phim
+              </Text>
+              <Text style={[styles.progressHintBadge, { color: colors.primary }]}>
+                (Xem danh sách 👁)
+              </Text>
+            </View>
             <Text style={[styles.progressPercent, { color: colors.primary }]}>
               {watchedPercentage}%
             </Text>
@@ -273,9 +328,9 @@ export default function WatchlistScreen() {
           </View>
 
           <Text style={[styles.progressSubtext, { color: colors.textSecondary }]}>
-            Đã xem {watchedCount} trên tổng số {totalTitles} bộ phim
+            Đã xem {watchedCount} trên tổng số {totalTitles} bộ phim • Nhấn để xem chi tiết
           </Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Thanh tìm kiếm theo tên phim - Nhúng trực tiếp, không qua hàm con */}
         <View
@@ -385,6 +440,167 @@ export default function WatchlistScreen() {
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
       />
+
+      {/* 
+        =============================================================================
+        MODAL HIỂN THỊ DANH SÁCH PHIM ĐÃ XEM (DÙNG MODAL CÓ SẴN CỦA REACT NATIVE):
+        - animationType="slide", transparent={true}
+        - Đóng khi bấm ra ngoài vùng nền mờ (backdrop) hoặc bấm nút Đóng (✕)
+        - Render danh sách bằng FlatList: Poster, Tên phim, Thể loại, Nút Bỏ đánh dấu
+        - Bấm vào item chuyển hướng sang trang chi tiết phim và đóng modal
+        - Chuẩn Touch Target >= 44x44 pt và không lồng button
+        =============================================================================
+      */}
+      <Modal
+        visible={isWatchedModalOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsWatchedModalOpen(false)}
+      >
+        {/* Khung chứa Modal: dùng View bao ngoài để tránh tạo thẻ <button> bọc toàn bộ trên Web */}
+        <View style={styles.modalRootContainer}>
+          {/* Lớp nền mờ backdrop: đặt độc lập phía sau để đóng modal khi chạm bên ngoài */}
+          <Pressable
+            style={[StyleSheet.absoluteFill, { backgroundColor: colors.overlay }]}
+            onPress={() => setIsWatchedModalOpen(false)}
+            accessibilityRole="none"
+            accessibilityLabel="Đóng danh sách phim đã xem"
+          />
+
+          {/* Hộp nội dung Modal dạng Bottom Sheet: dùng View làm container */}
+          <View
+            style={[
+              styles.modalContent,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
+            {/* Header Modal */}
+            <View
+              style={[
+                styles.modalHeader,
+                { borderBottomColor: colors.border },
+              ]}
+            >
+              <View style={styles.modalHeaderTitleBox}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>
+                  Danh sách Phim Đã Xem ({watchedTitles.length})
+                </Text>
+                <Text
+                  style={[styles.modalSubtitle, { color: colors.textSecondary }]}
+                >
+                  Bấm vào phim để xem chi tiết hoặc bấm Bỏ đánh dấu
+                </Text>
+              </View>
+
+              {/* Nút Đóng Modal (Chuẩn Touch Target >= 44x44 pt) */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Đóng danh sách phim đã xem"
+                onPress={() => setIsWatchedModalOpen(false)}
+                style={({ pressed }) => [
+                  styles.modalCloseButton,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                    opacity: pressed ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <Text style={[styles.modalCloseButtonText, { color: colors.text }]}>
+                  ✕
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* Danh sách phim đã xem hoặc thông báo trống */}
+            {watchedTitles.length === 0 ? (
+              <View style={styles.modalEmptyContainer}>
+                <Text
+                  style={[styles.modalEmptyText, { color: colors.textSecondary }]}
+                >
+                  Chưa có bộ phim nào được đánh dấu là đã xem.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={watchedTitles}
+                keyExtractor={(item) => `modal-watched-${item.id}`}
+                renderItem={({ item }) => (
+                  <View
+                    style={[
+                      styles.modalItemCard,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    {/* Vùng bấm xem chi tiết phim trong Modal */}
+                    <Pressable
+                      accessibilityRole="link"
+                      accessibilityLabel={`Xem chi tiết phim ${item.name}`}
+                      onPress={() => {
+                        setIsWatchedModalOpen(false);
+                        router.push(`/title/${item.id}?type=${item.type}`);
+                      }}
+                      style={({ pressed }) => [
+                        styles.modalItemAction,
+                        { opacity: pressed ? 0.75 : 1 },
+                      ]}
+                    >
+                      <Image
+                        source={{ uri: item.posterUrl }}
+                        style={styles.modalPoster}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.modalItemInfo}>
+                        <Text
+                          style={[styles.modalItemName, { color: colors.text }]}
+                          numberOfLines={1}
+                        >
+                          {item.name}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.modalItemMeta,
+                            { color: colors.textSecondary },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {item.type === 'movie' ? '🎬 Phim lẻ' : '📺 Phim bộ'} •{' '}
+                          {item.genre.join(', ')}
+                        </Text>
+                      </View>
+                    </Pressable>
+
+                    {/* Nút Bỏ đánh dấu / Chuyển về Cần xem (độc lập, không lồng button) */}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Bỏ đánh dấu phim ${item.name} chuyển về cần xem`}
+                      onPress={() => toggleWatchStatus(item.id)}
+                      style={({ pressed }) => [
+                        styles.modalUnwatchButton,
+                        {
+                          borderColor: colors.border,
+                          backgroundColor: colors.card,
+                          opacity: pressed ? 0.7 : 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.modalUnwatchText, { color: colors.error }]}
+                      >
+                        ↩ Cần xem
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+                contentContainerStyle={styles.modalListContent}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -422,6 +638,28 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     marginBottom: 4,
   },
+  // Hàng thanh công cụ chứa tiêu đề và nút chuyển Theme Sáng/Tối
+  topBarRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  appHeaderTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  themeToggleBtn: {
+    minHeight: 44, // Chuẩn Touch Target tối thiểu 44pt
+    minWidth: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themeToggleIcon: {
+    fontSize: 20,
+  },
   // Khối tiến độ
   progressCard: {
     padding: 16,
@@ -438,6 +676,15 @@ const styles = StyleSheet.create({
   progressTitle: {
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  progressTitleWithHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  progressHintBadge: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   progressPercent: {
     fontSize: 18,
@@ -571,5 +818,110 @@ const styles = StyleSheet.create({
   resetButton: {
     marginTop: 16,
     minWidth: 180,
+  },
+  // Modal danh sách phim đã xem
+  modalRootContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    maxHeight: '80%',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 28,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  modalHeaderTitleBox: {
+    flex: 1,
+    marginRight: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  modalCloseButton: {
+    minWidth: 44, // Chuẩn Touch Target tối thiểu 44pt
+    minHeight: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  modalEmptyContainer: {
+    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalEmptyText: {
+    fontSize: 15,
+    textAlign: 'center',
+  },
+  modalListContent: {
+    paddingBottom: 20,
+  },
+  modalItemCard: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  modalItemAction: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 10,
+    minHeight: 44, // Chuẩn Touch Target tối thiểu 44pt
+  },
+  modalPoster: {
+    width: 48,
+    height: 68,
+    borderRadius: 6,
+  },
+  modalItemInfo: {
+    flex: 1,
+    marginLeft: 10,
+    justifyContent: 'center',
+  },
+  modalItemName: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  modalItemMeta: {
+    fontSize: 12,
+  },
+  modalUnwatchButton: {
+    minHeight: 44, // Chuẩn Touch Target tối thiểu 44pt
+    minWidth: 44,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalUnwatchText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
